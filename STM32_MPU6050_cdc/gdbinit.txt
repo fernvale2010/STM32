@@ -1,0 +1,15 @@
+target extended-remote \\.\COM12
+monitor swdp_scan
+attach 1
+mon option erase
+monitor vector_catch disable hard
+set mem inaccessible-by-default off
+set print pretty
+
+#And if code should be auto loaded and run, add:
+load STM32_MPU6050.elf
+symbol STM32_MPU6050.elf
+tbreak main
+run
+
+
