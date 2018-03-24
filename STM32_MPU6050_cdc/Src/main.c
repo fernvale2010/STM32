@@ -28,6 +28,10 @@
 #include "ringbuffer.h"
 #include "usart.h"
 
+#ifndef M_PI
+#define M_PI           3.14159265358979323846
+#endif
+
 #define USE_LCD      0  // 1 if to use ST7735 LCD, 0 to comment out..
 
 int gyro_x = 0, gyro_y = 0, gyro_z = 0;
@@ -37,7 +41,7 @@ float angle_pitch = 0.0, angle_roll = 0.0;
 int angle_pitch_buffer = 0, angle_roll_buffer = 0;
 bool set_gyro_angles = FALSE;
 float angle_roll_acc = 0.0, angle_pitch_acc = 0.0;
-float angle_pitch_output = 0.0, angle_roll_output = 0.0;
+//float angle_pitch_output = 0.0, angle_roll_output = 0.0;
 
 extern __IO uint32_t syscnt;
 
@@ -144,6 +148,32 @@ void main_usbvcp_loop(void)
 }
 
 
+void computeAngles(float accX, float accY, float accZ, float gyroX, float gyroY, float gyroZ, float *pitch, float *roll)
+{
+   float dist;
+   float rad;
+
+   // scale raw readings by sensitivities
+   accX = accX / 16384.0;
+   accY /= 16384.0;
+   accZ /= 16384.0;
+
+   gyroX /= 131.0;
+   gyroY /= 131.0;
+   gyroZ /= 131.0;
+
+
+   dist = sqrt((accX * accX) + (accZ * accZ));
+   rad = atan2(accY, dist);
+   *pitch = rad * 180 / M_PI;
+
+   dist = sqrt((accY * accY) + (accZ * accZ));
+   rad = atan2(accX, dist);
+   *roll = rad * 180 / M_PI;
+}
+
+
+
 /*
  * MPU6050 main loop.
  */
@@ -152,8 +182,11 @@ void main_mpu_loop(void)
    uint8_t cnt = 0;
    int i, tmp;
    u32 starttime;
-   char dispbuffer[64];
+   char dispbuffer[256];
    s16 mpu_val[6];
+   float time_diff = 0.004; // 4 ms, 250Hz
+   float gyro_x_delta, gyro_y_delta, gyro_total_x, gyro_total_y;
+   float tmp_pitch, tmp_roll;
 
    MPU6050_I2C_Init();
    if (MPU6050_TestConnection())
@@ -177,6 +210,18 @@ void main_mpu_loop(void)
       gyro_y_cal /= 2000;
       gyro_z_cal /= 2000;
 
+      // get initial values for angles:
+      MPU6050_GetRawAccelGyro(mpu_val);
+      acc_x = mpu_val[0];
+      acc_y = mpu_val[1];
+      acc_z = mpu_val[2];
+      gyro_x = mpu_val[3] - gyro_x_cal;            //Subtract the offset calibration value from the raw gyro_x value
+      gyro_y = mpu_val[4] - gyro_y_cal;            //Subtract the offset calibration value from the raw gyro_y value
+      gyro_z = mpu_val[5] - gyro_z_cal;            //Subtract the offset calibration value from the raw gyro_z value
+      computeAngles(acc_x, acc_y, acc_z, gyro_x, gyro_y, gyro_z, &angle_pitch, &angle_roll);
+      gyro_total_x = angle_roll;
+      gyro_total_y = angle_pitch;
+
       while(1)
       {
          starttime = syscnt;
@@ -188,6 +233,7 @@ void main_mpu_loop(void)
          gyro_x = mpu_val[3] - gyro_x_cal;            //Subtract the offset calibration value from the raw gyro_x value
          gyro_y = mpu_val[4] - gyro_y_cal;            //Subtract the offset calibration value from the raw gyro_y value
          gyro_z = mpu_val[5] - gyro_z_cal;            //Subtract the offset calibration value from the raw gyro_z value
+#if 0
 #if 1
          // write readings to ringbuffer for sending via usb cdc to a PC..
          sprintf(dispbuffer, "%d %d %d %d %d %d\n",
@@ -223,45 +269,40 @@ void main_mpu_loop(void)
                EP1_IN_Callback();
             }
          }
+#endif
+         computeAngles(acc_x, acc_y, acc_z, gyro_x, gyro_y, gyro_z, &tmp_pitch, &tmp_roll);
+         gyro_x_delta = (gyro_x / 131.0 * time_diff);
+         gyro_y_delta = (gyro_y / 131.0 * time_diff);
+         //sg: angle from gyro is obtained by summing the changes (ie, integration), without correction will just keep increasing until saturation
+         gyro_total_x += gyro_x_delta;
+         gyro_total_y += gyro_y_delta;
 
-         //Gyro angle calculations
-         //0.0000611 = 1 / (250Hz / 65.5)
-         angle_pitch += gyro_x * 0.0000611;           //Calculate the traveled pitch angle and add this to the angle_pitch variable
-         angle_roll += gyro_y * 0.0000611;            //Calculate the traveled roll angle and add this to the angle_roll variable
+         //sg: complementary filter on accelerometer and gyro, last_x, last_y, rotation_x, rotation_y are in degrees
+         angle_roll = 0.98 * (angle_roll + gyro_x_delta) + (0.02 * tmp_roll);
+         angle_pitch = 0.98 * (angle_pitch + gyro_y_delta) + (0.02 * tmp_pitch);
 
-         //0.000001066 = 0.0000611 * (3.142(PI) / 180degr) The Arduino sin function is in radians
-         angle_pitch += angle_roll * sin(gyro_z * 0.000001066);      //If the IMU has yawed transfer the roll angle to the pitch angel
-         angle_roll -= angle_pitch * sin(gyro_z * 0.000001066);      //If the IMU has yawed transfer the pitch angle to the roll angel
+         angle_pitch_buffer = angle_pitch;
+         angle_roll_buffer = angle_roll;
 
-         //Accelerometer angle calculations
-         acc_total_vector = sqrt((acc_x * acc_x) + (acc_y * acc_y) + (acc_z * acc_z));  //Calculate the total accelerometer vector
-         //57.296 = 1 / (3.142 / 180) The Arduino asin function is in radians
-         angle_pitch_acc = asin((float)acc_y/acc_total_vector) * 57.296;       //Calculate the pitch angle
-         angle_roll_acc = asin((float)acc_x/acc_total_vector) * -57.296;       //Calculate the roll angle
-
-         //Place the MPU-6050 spirit level and note the values in the following two lines for calibration
-         angle_pitch_acc -= 0.0;                                              //Accelerometer calibration value for pitch
-         angle_roll_acc -= 0.0;                                               //Accelerometer calibration value for roll
-
-         if (set_gyro_angles)                                                 //If the IMU is already started
+         if (1)
          {
-            angle_pitch = angle_pitch * 0.9996 + angle_pitch_acc * 0.0004;     //Correct the drift of the gyro pitch angle with the accelerometer pitch angle
-            angle_roll = angle_roll * 0.9996 + angle_roll_acc * 0.0004;        //Correct the drift of the gyro roll angle with the accelerometer roll angle
-         }
-         else                                                                //At first start
-         {
-            angle_pitch = angle_pitch_acc;                                     //Set the gyro pitch angle equal to the accelerometer pitch angle
-            angle_roll = angle_roll_acc;                                       //Set the gyro roll angle equal to the accelerometer roll angle
-            set_gyro_angles = TRUE;                                            //Set the IMU started flag
+            // write readings to ringbuffer for sending via usb cdc to a PC..
+            // NOTE: To print float, ensure heap is large..
+            snprintf(dispbuffer, sizeof(dispbuffer), "%0.2f:%0.2f\n", angle_roll, angle_pitch);
+            cnt = strlen(dispbuffer);
+
+            if (ringbuffer_available(pRingbuffer) > cnt) // write only if enough storage available
+            {
+               tmp = ringbuffer_write(pRingbuffer, (u8*)dispbuffer, cnt);
+               if ((bDeviceState == CONFIGURED) && (GetEPTxStatus(ENDP1) == EP_TX_NAK))
+               {
+                  // not sending anything, so just call EP1_IN_Callback()..
+                  extern void EP1_IN_Callback (void);
+                  EP1_IN_Callback();
+               }
+            }
          }
 
-         //To dampen the pitch and roll angles a complementary filter is used
-         angle_pitch_output = angle_pitch_output * 0.9 + angle_pitch * 0.1;   //Take 90% of the output pitch value and add 10% of the raw pitch value
-         angle_roll_output = angle_roll_output * 0.9 + angle_roll * 0.1;      //Take 90% of the output roll value and add 10% of the raw roll value
-
-         // since the values are x10, to see angle, divide by 10 will give angle to 1 decimal place..
-         angle_pitch_buffer = angle_pitch_output * 10;
-         angle_roll_buffer = angle_roll_output * 10;
 
 #if (USE_LCD==1)
          //write_LCD();                                                       //Write the roll and pitch values to the LCD display
@@ -356,8 +397,8 @@ int main(void)
 
    // select which one to run.. only 1 can be active.
    run_gps = 0;
-   run_vcp = 1;
-   run_mpu = 0;
+   run_vcp = 0;
+   run_mpu = 1;
 
    if (run_vcp) main_usbvcp_loop();
    if (run_gps) main_gps_loop();

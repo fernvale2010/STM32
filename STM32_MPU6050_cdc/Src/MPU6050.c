@@ -36,6 +36,18 @@
  * @{
  */
 
+//# MPU6050 accelerometer sensitivities:
+//# 2 g    - 16384 counts/g
+//# 4 g    - 8192 counts/g
+//# 8 g    - 4096 counts/g
+//# 16 g   - 2048 counts/g
+//#
+//# Gyro
+//# 250 deg/s  - 131 counts per degree/s
+//# 500 deg/s  - 65.5
+//# 1000 deg/s - 32.8
+//# 2000 deg/s - 16.4
+
 /** Power on and prepare for general usage.
  * This will activate the device and take it out of sleep mode (which must be done
  * after start-up). This function also sets both the accelerometer and the gyroscope
@@ -46,8 +58,8 @@
 void MPU6050_Initialize()
 {
     MPU6050_SetClockSource(MPU6050_CLOCK_INTERNAL);  //MPU6050_CLOCK_PLL_XGYRO
-    MPU6050_SetFullScaleGyroRange(MPU6050_GYRO_FS_500); //MPU6050_GYRO_FS_250
-    MPU6050_SetFullScaleAccelRange(MPU6050_ACCEL_FS_8); //MPU6050_ACCEL_FS_2
+    MPU6050_SetFullScaleGyroRange(MPU6050_GYRO_FS_250); //MPU6050_GYRO_FS_250
+    MPU6050_SetFullScaleAccelRange(MPU6050_ACCEL_FS_2); //MPU6050_ACCEL_FS_2
     MPU6050_SetSleepModeStatus(DISABLE);
 }
 
