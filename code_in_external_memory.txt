@@ -1,0 +1,64 @@
+
+
+http://www.stm32duino.com/viewtopic.php?t=1651
+-----------------------------------------------
+
+Running code from SRAM in GNU GCC..
+First of all, you need the –mlong-calls switch specified to the compiler. 
+This is needed as calling functions in flash from sram or vice-versa require a 
+branch instruction that can branch “further away”. Then you need the following 
+in an accessible header file or at the top of a C file that will use it
+
+
+#define RAMFUNC __attribute__ ((long_call, section (".ramfunctions"))) 
+
+
+This is a macro for a function attribute which you can apply to a function that you 
+want in SRAM. It really just places the function in a section called “.ramfunctions”, 
+where it would be placed in a section called “.text” by default. (We need to update 
+the linker script in a later step to tell the linker what to do with .ramfunctions). 
+You can apply this to specific functions like shown below. (You have to apply it to 
+the prototype as well).
+
+
+RAMFUNC void MyRAMFunc(unsigned uiNumsamples) ; 
+
+RAMFUNC void MyRAMFunc(unsigned uiNumsamples) {
+// Function Body
+}
+
+
+That works for C functions, you need to put something like this at the top of assembler 
+functions (again putting the code into an appropriately named sections).
+
+
+.section ".ramfunctions"
+.align 8
+.global PutOneChar
+.thumb
+.thumb_func
+.type PutOneChar, %function 
+
+
+Then in the linker script file (*.ld) you need something like the line in red below 
+inserted to tell the linker to put the functions marked as .ramfunctions into SRAM.
+
+
+.data : AT (_etext)
+{
+_data = .;
+*(vtable vtable.*)
+*(.data .data.*)
+*(.gnu.linkonce.d*)
+. = ALIGN(4);
+*(.ramfunctions) /* !!!! Placing functions in .ramfunctions section in RAM */
+_edata = . ;
+} > SRAM
+
+
+This will store the function in flash to begin with, then copy it automatically into 
+SRAM before it gets executed (almost identical to how initialised variables are handled). 
+Just place RAMFUNC on any function that you want in RAM. Bear in mind that the attribute 
+should be applied to any function that this function calls as well.
+
+
